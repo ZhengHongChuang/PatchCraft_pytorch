@@ -129,7 +129,6 @@ def apply_filters(rich_texture, poor_texture):
     poor_img = cv2.cvtColor(poor_img, cv2.COLOR_RGB2GRAY)//7
     img_rich_thresh = np.median(rich_img)+2
     img_poor_thresh = np.median(poor_img)+2
-
     return cv2.threshold(rich_img, img_rich_thresh, 255, cv2.THRESH_BINARY)[1], cv2.threshold(poor_img, img_poor_thresh, 255, cv2.THRESH_BINARY)[1]
     
 
