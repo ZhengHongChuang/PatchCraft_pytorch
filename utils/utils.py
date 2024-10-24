@@ -1,8 +1,12 @@
 import os
 import torch
 import torch.distributed as dist
-
-
+import torch.nn as nn
+from modules.net import RichPoorTextureContrastModel
+from torch.utils.data.distributed import DistributedSampler
+from data.datasets import TrainDataset
+from torch.utils.data import DataLoader
+from torch.utils.tensorboard import SummaryWriter
 def is_dist_avail_and_initialized():
     if not dist.is_available():
         return False
@@ -63,3 +67,63 @@ def init_distributed_mode(args):
     )
     dist.barrier()
     setup_for_distributed(args.rank == 0)
+
+
+def load_model(args):
+    return RichPoorTextureContrastModel().to(args.device)
+
+
+def load_loss_fn(args):
+    return nn.BCELoss().to(args.device)
+
+
+def load_optimizer(model, args):
+    return torch.optim.Adam(model.parameters(), lr=args.blr)
+
+
+def load_checkpoint(args, net):
+    checkpoint = torch.load(args.net_pth)
+    net.load_state_dict(checkpoint['model'])
+    return checkpoint['epoch']
+
+def set_DistributedSampler(datasets,shuffle=True):
+    datasets_sampler = DistributedSampler(datasets,
+                                          num_replicas=get_world_size(),
+                                          rank=get_rank(),
+                                          shuffle=shuffle)
+    return datasets_sampler
+
+def get_datasets(args,is_train=True):
+    datasets = TrainDataset(args.data_path, is_train=is_train)
+    return datasets
+
+def get_dataloader(datasets, sampler, args):
+    dataloader = DataLoader(datasets, batch_size=args.batch_size, sampler=sampler, num_workers=args.num_works)
+    return dataloader
+
+
+def set_logs(args):
+    if args.rank == 0:
+        writer = SummaryWriter(args.log_dir)
+        os.makedirs(args.outputs, exist_ok=True)
+    else:
+        writer = None
+    return writer
+
+def set_dataParallel(args,net):
+    if args.use_dp:
+        net = torch.nn.DataParallel(net)
+    elif args.use_ddp:
+        net = torch.nn.parallel.DistributedDataParallel(net, device_ids=[args.local_rank], output_device=args.local_rank)
+    return net
+
+
+def adjust_learning_rate(optimizer,args):
+    lr = optimizer.param_groups[0]['lr']
+    if lr * 0.8 < args.min_lr:
+        lr = args.min_lr
+    else:
+        lr = lr * 0.8
+    for param_group in optimizer.param_groups:
+        param_group['lr'] = lr
+

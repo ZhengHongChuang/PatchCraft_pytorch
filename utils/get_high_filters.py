@@ -54,7 +54,7 @@ def generate_rotations(kernel, angles):
 
 # 旋转角度
 angles_8_directions = [45, 90, 135, 180, 225, 270, 315, 360]  # 对应 ↗, →, ↘, ↓, ↙, ←, ↖, ↑
-angles_4_directions = [45, 90, 135, 180]  # 对应 →, ↓, ↗, ↘
+angles_4_directions = [270, 0, 225, 315]  # 对应 →, ↓, ↗, ↘
 angles_4_directions_main = [90, 180, 270, 360]  # 对应 →, ↓, ←, ↑
 
 # 创建字典用于保存不同类别的滤波器
@@ -79,7 +79,7 @@ filter_e = {f'rotation_{i+1}': rot for i, rot in enumerate(generate_rotations(ke
 # 输出各类滤波器数量
 # print(filter_a)
 # print(filter_b)
-# print(filter_c)
+print(filter_c)
 # print(filter_d)
-print(filter_e)
+# print(filter_e)
 

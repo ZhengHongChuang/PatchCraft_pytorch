@@ -4,7 +4,7 @@
 MASTER_ADDR=localhost
 MASTER_PORT=29500
 RANK=0  
-nnodes=2
+nnodes=1
 nproc_per_node=2
 
 DISTRIBUTED_ARGS="

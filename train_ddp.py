@@ -1,4 +1,3 @@
-from modules.net import get_model, get_loss_fn, get_optimizer
 from data.datasets import TrainDataset
 from torch.utils.data import DataLoader, random_split, DistributedSampler
 from torch.utils.tensorboard import SummaryWriter
@@ -7,24 +6,27 @@ from tqdm import tqdm
 import torch
 import os
 import torch.distributed as dist
-from utils.utils import init_distributed_mode, get_world_size, get_rank
-import torch.backends.cudnn as cudnn
+import utils.utils as utils
+from utils.utils import init_distributed_mode, get_world_size, get_rank, load_checkpoint,load_model,load_loss_fn,load_optimizer
 import warnings
-
+import torch.backends.cudnn as cudnn
 warnings.filterwarnings("ignore", category=UserWarning, module="torch.functional")
 
 def args_parser():
     parser = argparse.ArgumentParser(description="Train the model")
     parser.add_argument("--batch_size", type=int, default=64, help="batch size")
-    parser.add_argument("--lr", type=float, default=1e-3, help="learning rate")
+    parser.add_argument("--blr", type=float, default=1e-3, help="learning rate")
+    parser.add_argument("--min_lr", type=float, default=1e-5, help="learning rate")
     parser.add_argument("--epochs", type=int, default=100, help="number of epochs")
     parser.add_argument("--device", type=str, default="cuda", help="device to use")
     parser.add_argument("--data_path",type=str,default="/home/ubuntu/datasets/GenImages/sd5",help="path to the data")
     parser.add_argument("--log_dir", type=str, default="logs_ddp", help="path to the logs")
     parser.add_argument("--outputs", type=str, default="outputs_ddp", help="path to the outputs")
-    parser.add_argument("--use_ddp", type=bool, default=True, help="Use DataParallel for multi-GPU training")
+    parser.add_argument("--use_ddp", type=bool, default=True, help="Use DistributedDataParallel")
+    parser.add_argument("--use_dp", type=bool, default=False, help="Use DataParallel")
     parser.add_argument('--local_rank', default=-1, type=int)
     parser.add_argument("--num_works", type=int, default=8, help="total number of processes")
+    parser.add_argument('--resume',default="outputs_ddp",type=str,help='resume from checkpoint')
     return parser.parse_args()
 
 def evaluate(net, dataloader, criterion, device, writer=None, epoch=None):
@@ -62,23 +64,17 @@ def train(args):
     init_distributed_mode(args)
     cudnn.benchmark = True
 
-    train_datasets = TrainDataset(args.data_path, is_train=True)
-    test_datasets = TrainDataset(args.data_path, is_train=False)
-    
-    train_sampler = DistributedSampler(train_datasets, num_replicas=get_world_size(), rank=get_rank(), shuffle=True)
-    test_sampler = DistributedSampler(test_datasets, num_replicas=get_world_size(), rank=get_rank(), shuffle=False)
-
-    train_dataloader = DataLoader(train_datasets, batch_size=args.batch_size, sampler=train_sampler,num_workers=args.num_works)
-    test_dataloader = DataLoader(test_datasets, batch_size=args.batch_size, sampler=test_sampler,num_workers=args.num_works)
-
-    writer = SummaryWriter(args.log_dir) if args.rank == 0 else None
-    os.makedirs(args.outputs, exist_ok=True)
-
-    net = get_model().to(args.device)
-    net = torch.nn.parallel.DistributedDataParallel(net, device_ids=[args.gpu], find_unused_parameters=True)
-    criterion = get_loss_fn().to(args.device)
-    optimizer = get_optimizer(net, args.lr)
-
+    train_datasets = utils.get_datasets(args,is_train=True)
+    test_datasets = utils.get_datasets(args,is_train=False)
+    train_sampler = utils.set_DistributedSampler(train_datasets, shuffle=True)
+    test_sampler = utils.set_DistributedSampler(test_datasets, shuffle=False)
+    train_dataloader = utils.get_dataloader(train_datasets, train_sampler, args)
+    test_dataloader = utils.get_dataloader(test_datasets, test_sampler, args)
+    writer = utils.set_logs(args)
+    net = load_model(args)
+    net = utils.set_dataParallel(args,net)
+    criterion = load_loss_fn(args)
+    optimizer = load_optimizer(net,args)
     for epoch in range(args.epochs):
         train_sampler.set_epoch(epoch)
         progress_bar = tqdm(enumerate(train_dataloader), total=len(train_dataloader), desc=f'Epoch [{epoch + 1}/{args.epochs}]')
@@ -115,6 +111,7 @@ def train(args):
             torch.save(checkpoint, f"{args.outputs}/checkpoint_{epoch}.pth")
 
         test_loss, test_accuracy = evaluate(net, test_dataloader, criterion, args.device, writer, epoch)
+        utils.adjust_learning_rate(optimizer, args)
         if writer:
             writer.add_scalar("test_loss", test_loss, epoch)
             writer.add_scalar("test_accuracy", test_accuracy, epoch)
