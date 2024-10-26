@@ -1,4 +1,5 @@
 import os
+import math
 import torch
 import torch.distributed as dist
 import torch.nn as nn
@@ -6,6 +7,7 @@ from modules.net import RichPoorTextureContrastModel
 from torch.utils.data.distributed import DistributedSampler
 from data.datasets import TrainDataset
 from torch.utils.data import DataLoader
+
 from torch.utils.tensorboard import SummaryWriter
 def is_dist_avail_and_initialized():
     if not dist.is_available():
@@ -74,11 +76,12 @@ def load_model(args):
 
 
 def load_loss_fn(args):
-    return nn.BCELoss().to(args.device)
+    return nn.CrossEntropyLoss().to(args.device)
+    # return nn.BCELoss().to(args.device)
 
 
-def load_optimizer(model, args):
-    return torch.optim.Adam(model.parameters(), lr=args.blr)
+def load_optimizer(model, lr):
+    return torch.optim.Adam(model.parameters(), lr=lr)
 
 
 def load_checkpoint(args, net):
@@ -118,12 +121,14 @@ def set_dataParallel(args,net):
     return net
 
 
-def adjust_learning_rate(optimizer,args):
-    lr = optimizer.param_groups[0]['lr']
-    if lr * 0.8 < args.min_lr:
-        lr = args.min_lr
+def adjust_learning_rate(optimizer, epoch, args):
+    if epoch < args.warmup_epochs:
+        lr = args.max_lr * (epoch + 1) / args.warmup_epochs
     else:
-        lr = lr * 0.8
+        lr = args.min_lr + (args.max_lr - args.min_lr) * (
+            1 + math.cos(math.pi * (epoch - args.warmup_epochs) /
+                         (args.T_max - args.warmup_epochs))) / 2
+
     for param_group in optimizer.param_groups:
         param_group['lr'] = lr
-
+    return lr
